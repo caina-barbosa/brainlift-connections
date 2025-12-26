@@ -35,7 +35,8 @@ def save_brainlift(
     brainlift_id: str,
     name: str,
     url: str,
-    sections: dict[str, Any]
+    sections: dict[str, Any],
+    raw_markdown: str = ""
 ) -> dict[str, Any]:
     """Save a new brainlift or update existing one"""
     data = _load_data()
@@ -48,6 +49,7 @@ def save_brainlift(
             "name": name,
             "url": url,
             "sections": sections,
+            "raw_markdown": raw_markdown,
             "updated_at": now,
         })
     else:
@@ -59,6 +61,7 @@ def save_brainlift(
             "created_at": now,
             "updated_at": now,
             "sections": sections,
+            "raw_markdown": raw_markdown,
             "connections": None,
         }
 

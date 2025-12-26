@@ -414,6 +414,7 @@ async def extract_brainlift(request: ExtractRequest):
             name=brainlift_name,
             url=request.url,
             sections=sections.model_dump(),
+            raw_markdown=markdown,
         )
 
         logger.info(f"Saved brainlift '{brainlift_name}' with ID {brainlift_id}")
@@ -512,6 +513,67 @@ async def analyze_connections(brainlift_id: str, force: bool = False):
     storage.save_connections(brainlift_id, connections)
 
     return ConnectionAnalysis(**connections)
+
+
+class RefreshResponse(BaseModel):
+    has_changes: bool
+    message: str
+    sections: BrainLiftSections | None = None
+
+
+@app.post("/brainlifts/{brainlift_id}/refresh", response_model=RefreshResponse)
+async def refresh_brainlift(brainlift_id: str):
+    """Check for changes in the WorkFlowy source and refresh if needed"""
+    brainlift = storage.get_brainlift(brainlift_id)
+    if not brainlift:
+        raise HTTPException(status_code=404, detail="BrainLift not found")
+
+    stored_markdown = brainlift.get("raw_markdown", "")
+    url = brainlift.get("url")
+
+    if not url:
+        raise HTTPException(status_code=400, detail="No URL stored for this BrainLift")
+
+    scraper = WorkflowyScraper()
+
+    try:
+        items, new_markdown = await scraper.scrape(url)
+
+        # Compare markdown
+        if new_markdown.strip() == stored_markdown.strip():
+            return RefreshResponse(
+                has_changes=False,
+                message="No changes detected"
+            )
+
+        # Changes detected - update storage
+        sections = extract_sections(items)
+        brainlift_name = extract_root_name(items)
+
+        storage.save_brainlift(
+            brainlift_id=brainlift_id,
+            name=brainlift_name,
+            url=url,
+            sections=sections.model_dump(),
+            raw_markdown=new_markdown,
+        )
+
+        # Clear cached connections since content changed
+        storage.save_connections(brainlift_id, None)
+
+        logger.info(f"Refreshed brainlift {brainlift_id} with new content")
+
+        return RefreshResponse(
+            has_changes=True,
+            message="Changes detected and updated",
+            sections=sections
+        )
+
+    except Exception as e:
+        logger.error(f"Error refreshing brainlift: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        await scraper.close()
 
 
 if __name__ == "__main__":

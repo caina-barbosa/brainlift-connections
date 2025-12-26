@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { Routes, Route, useParams, useNavigate, useSearchParams, Link } from "react-router-dom";
+import { Toaster, toast } from "sonner";
 import "./App.css";
 import DOKFlow from "./DOKFlow";
 
@@ -64,7 +65,62 @@ interface SavedBrainLift {
 const API_URL = import.meta.env.VITE_API_URL || "http://localhost:8001";
 
 // Sidebar component (shared across all pages)
-function Sidebar({ savedList, currentId }: { savedList: BrainLiftSummary[]; currentId: string | null }) {
+function Sidebar({ savedList, currentId, onDelete, onRefresh }: { savedList: BrainLiftSummary[]; currentId: string | null; onDelete: (id: string) => void; onRefresh?: (id: string) => void }) {
+  const [menuOpen, setMenuOpen] = useState<string | null>(null);
+  const navigate = useNavigate();
+
+  const handleDelete = async (id: string, e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+
+    if (!confirm("Delete this visualization?")) return;
+
+    try {
+      const res = await fetch(`${API_URL}/brainlifts/${id}`, { method: "DELETE" });
+      if (res.ok) {
+        onDelete(id);
+        if (currentId === id) {
+          navigate("/");
+        }
+      }
+    } catch (err) {
+      console.error("Failed to delete:", err);
+    }
+    setMenuOpen(null);
+  };
+
+  const handleRefreshClick = async (id: string, e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setMenuOpen(null);
+
+    try {
+      const res = await fetch(`${API_URL}/brainlifts/${id}/refresh`, {
+        method: "POST",
+      });
+
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.detail || "Refresh failed");
+      }
+
+      const data = await res.json();
+
+      if (data.has_changes) {
+        toast.success("Changes detected! Refreshing...");
+        if (onRefresh) {
+          onRefresh(id);
+        }
+      } else {
+        toast("No changes detected", {
+          style: { background: "#fef3c7", color: "#92400e" },
+        });
+      }
+    } catch (err) {
+      toast.error(`Refresh failed: ${err instanceof Error ? err.message : "Unknown error"}`);
+    }
+  };
+
   return (
     <aside className="w-64 bg-slate-50 border-r border-slate-200 p-4 shrink-0">
       <h2 className="text-sm font-semibold text-slate-500 uppercase tracking-wide mb-4">
@@ -80,17 +136,46 @@ function Sidebar({ savedList, currentId }: { savedList: BrainLiftSummary[]; curr
 
       <ul className="list-none p-0 m-0 space-y-1">
         {savedList.map((bl) => (
-          <li key={bl.id}>
+          <li key={bl.id} className="relative group">
             <Link
               to={`/bl/${bl.id}`}
-              className={`block w-full text-left px-3 py-2 text-sm rounded-lg transition-colors ${
+              className={`flex items-center justify-between w-full text-left px-3 py-2 text-sm rounded-lg transition-colors ${
                 currentId === bl.id
                   ? "bg-slate-200 text-slate-900"
                   : "text-slate-600 hover:bg-slate-100"
               }`}
             >
-              {bl.name}
+              <span className="truncate flex-1">{bl.name}</span>
+              <button
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setMenuOpen(menuOpen === bl.id ? null : bl.id);
+                }}
+                className="opacity-0 group-hover:opacity-100 p-1 hover:bg-slate-300 rounded transition-opacity"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" viewBox="0 0 16 16">
+                  <path d="M3 9.5a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3zm5 0a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3zm5 0a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3z"/>
+                </svg>
+              </button>
             </Link>
+
+            {menuOpen === bl.id && (
+              <div className="absolute right-2 top-full mt-1 bg-white border border-slate-200 rounded-lg shadow-lg z-20 py-1 min-w-[100px]">
+                <button
+                  onClick={(e) => handleRefreshClick(bl.id, e)}
+                  className="w-full text-left px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-50 transition-colors"
+                >
+                  Refresh
+                </button>
+                <button
+                  onClick={(e) => handleDelete(bl.id, e)}
+                  className="w-full text-left px-3 py-1.5 text-sm text-red-600 hover:bg-red-50 transition-colors"
+                >
+                  Delete
+                </button>
+              </div>
+            )}
           </li>
         ))}
         {savedList.length === 0 && (
@@ -108,7 +193,7 @@ function isValidWorkflowyUrl(url: string): boolean {
 }
 
 // Home page - new BrainLift extraction
-function HomePage({ savedList, onExtracted }: { savedList: BrainLiftSummary[]; onExtracted: () => void }) {
+function HomePage({ savedList, onRefresh }: { savedList: BrainLiftSummary[]; onRefresh: () => void }) {
   const navigate = useNavigate();
   const [url, setUrl] = useState("");
   const [loading, setLoading] = useState(false);
@@ -135,7 +220,7 @@ function HomePage({ savedList, onExtracted }: { savedList: BrainLiftSummary[]; o
       const data: ExtractResponse = await response.json();
 
       if (data.success && data.brainlift_id) {
-        onExtracted();
+        onRefresh();
         navigate(`/bl/${data.brainlift_id}`);
       } else {
         setError(data.error || "Failed to parse BrainLift");
@@ -149,7 +234,7 @@ function HomePage({ savedList, onExtracted }: { savedList: BrainLiftSummary[]; o
 
   return (
     <div className="flex min-h-screen">
-      <Sidebar savedList={savedList} currentId={null} />
+      <Sidebar savedList={savedList} currentId={null} onDelete={onRefresh} />
       <main className="flex-1 p-8 max-w-3xl">
         <header className="mb-8">
           <h1 className="text-2xl font-bold text-slate-800">Visualize BrainLift Connections</h1>
@@ -195,13 +280,14 @@ function HomePage({ savedList, onExtracted }: { savedList: BrainLiftSummary[]; o
 }
 
 // BrainLift detail page
-function BrainLiftPage({ savedList }: { savedList: BrainLiftSummary[] }) {
+function BrainLiftPage({ savedList, onRefresh }: { savedList: BrainLiftSummary[]; onRefresh: () => void }) {
   const { id } = useParams<{ id: string }>();
   const [searchParams, setSearchParams] = useSearchParams();
   const viewMode = (searchParams.get("view") as "list" | "flow") || "flow";
 
   const [loading, setLoading] = useState(true);
   const [analyzing, setAnalyzing] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const [brainlift, setBrainlift] = useState<SavedBrainLift | null>(null);
@@ -259,6 +345,47 @@ function BrainLiftPage({ savedList }: { savedList: BrainLiftSummary[] }) {
       setError(`Analysis error: ${e instanceof Error ? e.message : "Unknown error"}`);
     } finally {
       setAnalyzing(false);
+    }
+  };
+
+  const handleRefresh = async () => {
+    if (!id) return;
+
+    setRefreshing(true);
+
+    try {
+      const res = await fetch(`${API_URL}/brainlifts/${id}/refresh`, {
+        method: "POST",
+      });
+
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.detail || "Refresh failed");
+      }
+
+      const data = await res.json();
+
+      if (data.has_changes) {
+        toast.success("Changes detected! Refreshing...");
+        await loadBrainLift(id);
+        setTimeout(() => handleAnalyze(), 100);
+      } else {
+        toast("No changes detected", {
+          style: { background: "#fef3c7", color: "#92400e" },
+        });
+      }
+    } catch (e) {
+      toast.error(`Refresh failed: ${e instanceof Error ? e.message : "Unknown error"}`);
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
+  const handleSidebarRefresh = async (refreshedId: string) => {
+    // If the refreshed brainlift is the one we're viewing, reload and re-analyze
+    if (refreshedId === id) {
+      await loadBrainLift(refreshedId);
+      setTimeout(() => handleAnalyze(), 100);
     }
   };
 
@@ -429,7 +556,7 @@ function BrainLiftPage({ savedList }: { savedList: BrainLiftSummary[] }) {
   if (loading) {
     return (
       <div className="flex min-h-screen">
-        <Sidebar savedList={savedList} currentId={id || null} />
+        <Sidebar savedList={savedList} currentId={id || null} onDelete={onRefresh} onRefresh={handleSidebarRefresh} />
         <main className="flex-1 p-8 flex items-center justify-center">
           <p className="text-slate-500">Loading...</p>
         </main>
@@ -440,7 +567,7 @@ function BrainLiftPage({ savedList }: { savedList: BrainLiftSummary[] }) {
   if (!brainlift) {
     return (
       <div className="flex min-h-screen">
-        <Sidebar savedList={savedList} currentId={id || null} />
+        <Sidebar savedList={savedList} currentId={id || null} onDelete={onRefresh} onRefresh={handleSidebarRefresh} />
         <main className="flex-1 p-8">
           <div className="bg-red-50 text-red-600 p-4 rounded-lg">
             {error || "Visualization not found"}
@@ -455,7 +582,7 @@ function BrainLiftPage({ savedList }: { savedList: BrainLiftSummary[] }) {
 
   return (
     <div className="flex min-h-screen">
-      <Sidebar savedList={savedList} currentId={id || null} />
+      <Sidebar savedList={savedList} currentId={id || null} onDelete={onRefresh} onRefresh={handleSidebarRefresh} />
       <main className={`flex-1 p-8 ${viewMode === "flow" ? "" : "max-w-3xl"}`}>
         <header className="mb-6 flex items-center justify-between">
           <div>
@@ -492,6 +619,15 @@ function BrainLiftPage({ savedList }: { savedList: BrainLiftSummary[] }) {
                 </button>
               </div>
             )}
+            {/* Refresh button */}
+            <button
+              onClick={handleRefresh}
+              disabled={refreshing || analyzing}
+              className="px-3 py-2 text-sm font-medium text-slate-600 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 disabled:opacity-50 transition-colors"
+              title="Refresh from WorkFlowy"
+            >
+              {refreshing ? "Refreshing..." : "↻ Refresh"}
+            </button>
             {/* Analyze button */}
             {!connections && (
               <button
@@ -556,10 +692,13 @@ function App() {
   };
 
   return (
-    <Routes>
-      <Route path="/" element={<HomePage savedList={savedList} onExtracted={fetchSavedList} />} />
-      <Route path="/bl/:id" element={<BrainLiftPage savedList={savedList} />} />
-    </Routes>
+    <>
+      <Toaster position="top-right" richColors />
+      <Routes>
+        <Route path="/" element={<HomePage savedList={savedList} onRefresh={fetchSavedList} />} />
+        <Route path="/bl/:id" element={<BrainLiftPage savedList={savedList} onRefresh={fetchSavedList} />} />
+      </Routes>
+    </>
   );
 }
 
