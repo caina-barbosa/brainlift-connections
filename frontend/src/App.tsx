@@ -195,7 +195,7 @@ function HomePage({ savedList, onExtracted }: { savedList: BrainLiftSummary[]; o
 }
 
 // BrainLift detail page
-function BrainLiftPage({ savedList, onRefresh }: { savedList: BrainLiftSummary[]; onRefresh: () => void }) {
+function BrainLiftPage({ savedList }: { savedList: BrainLiftSummary[] }) {
   const { id } = useParams<{ id: string }>();
   const [searchParams, setSearchParams] = useSearchParams();
   const viewMode = (searchParams.get("view") as "list" | "flow") || "flow";
@@ -558,7 +558,7 @@ function App() {
   return (
     <Routes>
       <Route path="/" element={<HomePage savedList={savedList} onExtracted={fetchSavedList} />} />
-      <Route path="/bl/:id" element={<BrainLiftPage savedList={savedList} onRefresh={fetchSavedList} />} />
+      <Route path="/bl/:id" element={<BrainLiftPage savedList={savedList} />} />
     </Routes>
   );
 }
