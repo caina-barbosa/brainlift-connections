@@ -64,37 +64,28 @@ const COLUMN_GAP = 200;
 
 const COLORS = {
   dok4: {
-    bg: "bg-amber-50",
-    border: "border-amber-400",
-    text: "text-amber-900",
-    badge: "bg-amber-100 text-amber-800",
-    handle: "!bg-amber-500",
-    shadow: "shadow-amber-100",
+    primary: "var(--dok4-primary)",
+    glow: "var(--dok4-glow)",
+    bg: "var(--dok4-bg)",
   },
   dok3: {
-    bg: "bg-emerald-50",
-    border: "border-emerald-400",
-    text: "text-emerald-900",
-    badge: "bg-emerald-100 text-emerald-800",
-    handle: "!bg-emerald-500",
-    shadow: "shadow-emerald-100",
+    primary: "var(--dok3-primary)",
+    glow: "var(--dok3-glow)",
+    bg: "var(--dok3-bg)",
   },
   dok2: {
-    bg: "bg-blue-50",
-    border: "border-blue-400",
-    text: "text-blue-900",
-    badge: "bg-blue-100 text-blue-800",
-    handle: "!bg-blue-500",
-    shadow: "shadow-blue-100",
+    primary: "var(--dok2-primary)",
+    glow: "var(--dok2-glow)",
+    bg: "var(--dok2-bg)",
   },
 };
 
-// --- Custom Node Component ---
+// --- Custom Node Component (Dark Theme) ---
 
 const CustomDOKNode = memo(({ id, data, selected }: NodeProps) => {
   const [expanded, setExpanded] = useState(false);
   const { setNodes } = useReactFlow();
-  
+
   const dokType = data.dokType as "dok4" | "dok3" | "dok2";
   const colors = COLORS[dokType];
   const label = data.label as string;
@@ -105,7 +96,6 @@ const CustomDOKNode = memo(({ id, data, selected }: NodeProps) => {
     e.stopPropagation();
     setExpanded((prev) => {
       const next = !prev;
-      // Update z-index in React Flow state to ensure it renders on top
       setNodes((nodes) => nodes.map(n => {
         if (n.id === id) {
           return { ...n, zIndex: next ? 1000 : 0 };
@@ -119,82 +109,96 @@ const CustomDOKNode = memo(({ id, data, selected }: NodeProps) => {
   return (
     <div
       className={`
-        relative group transition-all duration-300 ease-in-out
-        w-[320px] rounded-xl border-2 
-        ${colors.bg} ${colors.border} ${colors.text}
-        ${selected ? "ring-2 ring-offset-2 ring-indigo-500 shadow-xl" : "shadow-md hover:shadow-lg"}
-        ${expanded ? "scale-105" : ""}
+        relative group transition-all duration-300 ease-out
+        w-[320px] rounded-2xl
+        ${selected ? "ring-2 ring-[var(--accent-primary)] ring-offset-2 ring-offset-[var(--bg-primary)]" : ""}
+        ${expanded ? "scale-[1.02]" : "hover:scale-[1.01]"}
       `}
+      style={{
+        background: "var(--bg-elevated)",
+        border: `1px solid ${colors.primary}`,
+        boxShadow: `0 0 ${expanded ? '30px' : '20px'} ${colors.glow}`,
+      }}
     >
       {/* Handles */}
       {(dokType === "dok4" || dokType === "dok3") && (
         <Handle
           type="target"
           position={Position.Right}
-          className={`w-3 h-3 border-2 border-white ${colors.handle}`}
+          className="!w-3 !h-3 !border-2 !border-[var(--bg-primary)]"
+          style={{ background: colors.primary }}
         />
       )}
       {(dokType === "dok3" || dokType === "dok2") && (
         <Handle
           type="source"
           position={Position.Left}
-          className={`w-3 h-3 border-2 border-white ${colors.handle}`}
+          className="!w-3 !h-3 !border-2 !border-[var(--bg-primary)]"
+          style={{ background: colors.primary }}
         />
       )}
 
       {/* Header / Title Area */}
-      <div 
+      <div
         className="p-4 cursor-pointer flex items-start gap-3"
         onClick={toggleExpand}
       >
-        <div className={`mt-0.5 w-6 h-6 flex items-center justify-center rounded-full ${colors.badge} text-xs font-bold shrink-0`}>
-           {dokType === 'dok4' ? '4' : dokType === 'dok3' ? '3' : '2'}
+        {/* DOK Badge */}
+        <div
+          className="mt-0.5 w-7 h-7 flex items-center justify-center rounded-full text-xs font-bold shrink-0"
+          style={{
+            background: colors.bg,
+            color: colors.primary,
+            border: `1px solid ${colors.primary}`,
+          }}
+        >
+          {dokType === 'dok4' ? '4' : dokType === 'dok3' ? '3' : '2'}
         </div>
-        
-        <div className="flex-1">
-          <div className="font-semibold text-sm leading-snug">
+
+        <div className="flex-1 min-w-0">
+          <div className="font-medium text-sm leading-snug text-[var(--text-primary)]">
             {expanded ? fullContent : label}
           </div>
           {!expanded && fullContent.length > label.length && (
-             <p className="text-[10px] opacity-60 mt-1 uppercase tracking-wider font-bold">Click to expand</p>
+            <p className="text-[10px] text-[var(--text-muted)] mt-1.5 uppercase tracking-wider font-semibold">
+              Click to expand
+            </p>
           )}
         </div>
 
-        <div className="text-slate-400 shrink-0">
-           {expanded ? (
-             <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
-               <path fillRule="evenodd" d="M7.646 4.646a.5.5 0 0 1 .708 0l6 6a.5.5 0 0 1-.708.708L8 5.707l-5.646 5.647a.5.5 0 0 1-.708-.708l6-6z"/>
-             </svg>
-           ) : (
-             <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
-               <path fillRule="evenodd" d="M1.646 4.646a.5.5 0 0 1 .708 0L8 10.293l5.646-5.647a.5.5 0 0 1 .708.708l-6 6a.5.5 0 0 1-.708 0l-6-6a.5.5 0 0 1 0-.708z"/>
-             </svg>
-           )}
+        {/* Expand indicator */}
+        <div className="text-[var(--text-muted)] shrink-0 transition-transform duration-300" style={{ transform: expanded ? 'rotate(180deg)' : 'rotate(0deg)' }}>
+          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" viewBox="0 0 24 24">
+            <polyline points="6 9 12 15 18 9" />
+          </svg>
         </div>
       </div>
 
       {/* Expanded Content */}
-      <div 
+      <div
         className={`
-          transition-all duration-300 ease-in-out px-4
+          transition-all duration-300 ease-out px-4
           ${expanded ? "max-h-[350px] opacity-100 pb-4 overflow-y-auto custom-scrollbar" : "max-h-0 opacity-0 pb-0 overflow-hidden"}
         `}
-        // Prevent scroll propagation to canvas
         onWheel={(e) => e.stopPropagation()}
       >
-         <div className={`h-px w-full ${colors.border} opacity-20 mb-3`} />
-         
-         {children.length > 0 ? (
-           <ul className="list-disc list-inside space-y-1">
-             {children.map((child, idx) => (
-               <li key={idx} className="text-xs opacity-90 leading-relaxed pl-1">
-                 {child}
-               </li>
-             ))}
-           </ul>
-         ) : (
-           <p className="text-xs opacity-60 italic">No additional details.</p>
-         )}
+        <div
+          className="h-px w-full opacity-30 mb-3"
+          style={{ background: colors.primary }}
+        />
+
+        {children.length > 0 ? (
+          <ul className="space-y-2">
+            {children.map((child, idx) => (
+              <li key={idx} className="text-xs text-[var(--text-secondary)] leading-relaxed flex items-start gap-2">
+                <span className="mt-1.5 w-1.5 h-1.5 rounded-full shrink-0" style={{ background: colors.primary, opacity: 0.5 }} />
+                <span>{child}</span>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="text-xs text-[var(--text-muted)] italic">No additional details.</p>
+        )}
       </div>
     </div>
   );
@@ -212,7 +216,7 @@ function truncateText(text: string, maxLength: number = 60): string {
   return firstLine.substring(0, maxLength - 3) + "...";
 }
 
-// --- Main Component ---
+// --- Download Button Component ---
 
 function DownloadButton() {
   const { getNodes } = useReactFlow();
@@ -227,10 +231,9 @@ function DownloadButton() {
       return;
     }
 
-    // Calculate tight bounds from node positions
     const nodeWidth = COLUMN_WIDTH;
-    const nodeHeight = 100; // Approximate collapsed node height
-    const padding = 25;
+    const nodeHeight = 100;
+    const padding = 50;
 
     let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
 
@@ -260,7 +263,7 @@ function DownloadButton() {
     }
 
     toPng(flowElement, {
-      backgroundColor: '#f8fafc',
+      backgroundColor: '#1e1e2e',
       width: width,
       height: height,
       style: {
@@ -287,32 +290,64 @@ function DownloadButton() {
     <button
       onClick={handleDownload}
       disabled={downloading}
-      className="flex items-center gap-2 px-3 py-2 bg-white hover:bg-slate-50 border border-slate-200 rounded-lg shadow-sm text-sm font-medium text-slate-700 transition-colors disabled:opacity-50"
+      className="btn-secondary"
       title="Export as PNG"
     >
-      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
-        <path d="M.5 9.9a.5.5 0 0 1 .5.5v2.5a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-2.5a.5.5 0 0 1 1 0v2.5a2 2 0 0 1-2 2H2a2 2 0 0 1-2-2v-2.5a.5.5 0 0 1 .5-.5z"/>
-        <path d="M7.646 11.854a.5.5 0 0 0 .708 0l3-3a.5.5 0 0 0-.708-.708L8.5 10.293V1.5a.5.5 0 0 0-1 0v8.793L5.354 8.146a.5.5 0 1 0-.708.708l3 3z"/>
+      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" viewBox="0 0 24 24">
+        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+        <polyline points="7 10 12 15 17 10" />
+        <line x1="12" y1="15" x2="12" y2="3" />
       </svg>
-      {downloading ? "Exporting..." : "Export PNG"}
+      {downloading ? "Exporting..." : "Export"}
     </button>
   );
 }
+
+// --- Legend Component ---
+
+function Legend() {
+  return (
+    <div className="glass-panel p-4 text-xs">
+      <div className="font-display font-semibold text-[var(--text-primary)] mb-3 text-sm">
+        BrainLift Structure
+      </div>
+
+      <div className="space-y-2">
+        <div className="flex items-center gap-2">
+          <div className="w-3 h-3 rounded-full shadow-sm" style={{ background: 'var(--dok4-primary)', boxShadow: '0 0 8px var(--dok4-glow)' }} />
+          <span className="text-[var(--text-secondary)]">DOK4 — SPOVs</span>
+        </div>
+        <div className="flex items-center gap-2">
+          <div className="w-3 h-3 rounded-full shadow-sm" style={{ background: 'var(--dok3-primary)', boxShadow: '0 0 8px var(--dok3-glow)' }} />
+          <span className="text-[var(--text-secondary)]">DOK3 — Insights</span>
+        </div>
+        <div className="flex items-center gap-2">
+          <div className="w-3 h-3 rounded-full shadow-sm" style={{ background: 'var(--dok2-primary)', boxShadow: '0 0 8px var(--dok2-glow)' }} />
+          <span className="text-[var(--text-secondary)]">DOK2 — Knowledge</span>
+        </div>
+      </div>
+
+      <div className="border-t border-[var(--border-subtle)] mt-3 pt-3 space-y-2">
+        <div className="flex items-center gap-2">
+          <div className="w-5 h-0.5 rounded-full" style={{ background: 'var(--dok3-primary)' }} />
+          <span className="text-[var(--text-muted)]">Supports</span>
+        </div>
+        <div className="flex items-center gap-2">
+          <div className="w-5 h-0.5 rounded-full bg-red-500" />
+          <span className="text-[var(--text-muted)]">Contradicts</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// --- Main Component ---
 
 export default function DOKFlow({ sections, connections }: DOKFlowProps) {
   const { initialNodes, initialEdges } = useMemo(() => {
     const nodes: Node[] = [];
     const edges: Edge[] = [];
 
-    // Column X positions (DOK4 left, DOK3 middle, DOK2 right)
-    // Note: We are using a visually RTL flow for logic: DOK2 -> DOK3 -> DOK4
-    // But rendering Left-to-Right on screen: DOK4 (left) < DOK3 < DOK2 (right)
-    // Wait, let's verify visual order.
-    // DOK4 (x=0) | DOK3 (x=300+) | DOK2 (x=600+)
-    // DOK2 connects to DOK3. DOK3 connects to DOK4.
-    // Visual arrows: DOK2 (Right) -> DOK3 (Middle) -> DOK4 (Left).
-    // Correct.
-    
     const columnX = {
       dok4: 0,
       dok3: COLUMN_WIDTH + COLUMN_GAP,
@@ -323,11 +358,9 @@ export default function DOKFlow({ sections, connections }: DOKFlowProps) {
     const dok3Items = sections.dok3_insights?.items || [];
     const dok2Items = sections.dok2_knowledge_tree?.items || [];
 
-    // Build connection maps for smart positioning
     const dok3ToDok4s: Map<number, number[]> = new Map();
     const dok3ToDok2s: Map<number, number[]> = new Map();
-    
-    // We track which items are placed to handle orphans later
+
     const positionedDok4s = new Set<number>();
     const positionedDok2s = new Set<number>();
 
@@ -343,25 +376,17 @@ export default function DOKFlow({ sections, connections }: DOKFlowProps) {
       });
     }
 
-    // 1. Position DOK3 nodes (Middle Column - Anchors)
     const dok3Positions: Map<number, number> = new Map();
     let currentY = 0;
 
     dok3Items.forEach((item) => {
-      // Calculate group height based on connected neighbors
       const connectedDok4Count = dok3ToDok4s.get(item.index)?.length || 0;
       const connectedDok2Count = dok3ToDok2s.get(item.index)?.length || 0;
-      // Ensure at least enough space for the node itself
       const groupSize = Math.max(1, connectedDok4Count, connectedDok2Count);
-      
-      // Center the DOK3 node in its "zone"
-      // The zone height is roughly groupSize * (NODE_HEIGHT approx 100 + GAP)
-      // Actually, let's just stack them with sufficient padding for the sub-trees
-      
-      const estimatedNodeHeight = 100; // rough estimate for collapsed state
+
+      const estimatedNodeHeight = 100;
       const zoneHeight = groupSize * (estimatedNodeHeight + NODE_GAP);
-      
-      // Place DOK3 in the middle of this zone
+
       const dok3Y = currentY + (zoneHeight / 2) - (estimatedNodeHeight / 2);
       dok3Positions.set(item.index, dok3Y);
 
@@ -369,29 +394,27 @@ export default function DOKFlow({ sections, connections }: DOKFlowProps) {
         id: `dok3-${item.index}`,
         type: "custom",
         position: { x: columnX.dok3, y: dok3Y },
-        data: { 
-          label: truncateText(item.content), 
+        data: {
+          label: truncateText(item.content),
           fullContent: item.content,
           children: item.children,
           dokType: "dok3"
         },
       });
 
-      // 2. Position Connected DOK4s (Left Column)
       const dok4s = dok3ToDok4s.get(item.index) || [];
-      const dok4StartY = currentY; // Start at top of zone
+      const dok4StartY = currentY;
       const dok4Step = zoneHeight / Math.max(1, dok4s.length);
 
       dok4s.forEach((dok4Idx, i) => {
         const dok4Item = dok4Items.find(d => d.index === dok4Idx);
         if (dok4Item && !positionedDok4s.has(dok4Idx)) {
-           // Center in its slice
            const d4y = dok4StartY + (i * dok4Step) + (dok4Step/2) - (estimatedNodeHeight/2);
            nodes.push({
              id: `dok4-${dok4Item.index}`,
              type: "custom",
              position: { x: columnX.dok4, y: d4y },
-             data: { 
+             data: {
                label: truncateText(dok4Item.content),
                fullContent: dok4Item.content,
                children: dok4Item.children,
@@ -402,7 +425,6 @@ export default function DOKFlow({ sections, connections }: DOKFlowProps) {
         }
       });
 
-      // 3. Position Connected DOK2s (Right Column)
       const dok2s = dok3ToDok2s.get(item.index) || [];
       const dok2StartY = currentY;
       const dok2Step = zoneHeight / Math.max(1, dok2s.length);
@@ -415,7 +437,7 @@ export default function DOKFlow({ sections, connections }: DOKFlowProps) {
             id: `dok2-${dok2Item.index}`,
             type: "custom",
             position: { x: columnX.dok2, y: d2y },
-            data: { 
+            data: {
                label: truncateText(dok2Item.content),
                fullContent: dok2Item.content,
                children: dok2Item.children,
@@ -429,45 +451,45 @@ export default function DOKFlow({ sections, connections }: DOKFlowProps) {
       currentY += zoneHeight + NODE_GAP * 2;
     });
 
-    // 4. Position Orphaned DOK4s
+    // Orphaned DOK4s
     dok4Items.forEach((item) => {
       if (!positionedDok4s.has(item.index)) {
         nodes.push({
           id: `dok4-${item.index}`,
           type: "custom",
           position: { x: columnX.dok4, y: currentY },
-          data: { 
+          data: {
              label: truncateText(item.content),
              fullContent: item.content,
              children: item.children,
              dokType: "dok4"
           },
-          style: { opacity: 0.6 }
+          style: { opacity: 0.5 }
         });
         currentY += 120;
       }
     });
 
-    // 5. Position Orphaned DOK2s
+    // Orphaned DOK2s
     dok2Items.forEach((item) => {
       if (!positionedDok2s.has(item.index)) {
         nodes.push({
           id: `dok2-${item.index}`,
           type: "custom",
           position: { x: columnX.dok2, y: currentY },
-          data: { 
+          data: {
              label: truncateText(item.content),
              fullContent: item.content,
              children: item.children,
              dokType: "dok2"
           },
-          style: { opacity: 0.6 }
+          style: { opacity: 0.5 }
         });
         currentY += 120;
       }
     });
 
-    // Edges
+    // Edges with improved styling
     if (connections) {
       connections.dok2_to_dok3.forEach((conn, idx) => {
         edges.push({
@@ -475,9 +497,8 @@ export default function DOKFlow({ sections, connections }: DOKFlowProps) {
           source: `dok2-${conn.source_index}`,
           target: `dok3-${conn.target_index}`,
           style: {
-            stroke: conn.type === "supports" ? "#10b981" : "#ef4444",
+            stroke: conn.type === "supports" ? "var(--dok3-primary)" : "#ef4444",
             strokeWidth: 2,
-            opacity: 0.6,
           },
           animated: conn.type === "contradicts",
         });
@@ -489,9 +510,8 @@ export default function DOKFlow({ sections, connections }: DOKFlowProps) {
           source: `dok3-${conn.source_index}`,
           target: `dok4-${conn.target_index}`,
           style: {
-            stroke: conn.type === "supports" ? "#10b981" : "#ef4444",
+            stroke: conn.type === "supports" ? "var(--dok3-primary)" : "#ef4444",
             strokeWidth: 2,
-            opacity: 0.6,
           },
           animated: conn.type === "contradicts",
         });
@@ -505,36 +525,10 @@ export default function DOKFlow({ sections, connections }: DOKFlowProps) {
   const [edges, , onEdgesChange] = useEdgesState(initialEdges);
 
   return (
-    <div className="w-full h-[calc(100vh-200px)] min-h-[600px] border border-slate-200 rounded-xl overflow-hidden bg-slate-50/50 relative shadow-inner">
-      {/* Legend */}
-      <div className="absolute top-6 left-6 z-10 bg-white/90 backdrop-blur-sm rounded-xl p-4 text-xs shadow-lg border border-slate-100">
-        <div className="font-bold text-slate-800 mb-3 text-sm">BrainLift Structure</div>
-        
-        <div className="space-y-2">
-          <div className="flex items-center gap-2">
-            <div className="w-3 h-3 rounded-full bg-amber-400 shadow-sm" />
-            <span className="text-slate-600 font-medium">DOK4 - SPOVs</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <div className="w-3 h-3 rounded-full bg-emerald-400 shadow-sm" />
-            <span className="text-slate-600 font-medium">DOK3 - Insights</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <div className="w-3 h-3 rounded-full bg-blue-400 shadow-sm" />
-            <span className="text-slate-600 font-medium">DOK2 - Knowledge</span>
-          </div>
-        </div>
-
-        <div className="border-t border-slate-100 mt-3 pt-3 space-y-2">
-          <div className="flex items-center gap-2">
-            <div className="w-6 h-0.5 bg-green-500 rounded-full" />
-            <span className="text-slate-500">Supports</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <div className="w-6 h-0.5 bg-red-500 rounded-full" />
-            <span className="text-slate-500">Contradicts</span>
-          </div>
-        </div>
+    <div className="w-full h-full relative">
+      {/* Legend - outside ReactFlow is fine (no hooks) */}
+      <div className="absolute bottom-6 left-6 z-10">
+        <Legend />
       </div>
 
       <ReactFlow
@@ -545,16 +539,16 @@ export default function DOKFlow({ sections, connections }: DOKFlowProps) {
         nodeTypes={nodeTypes}
         connectionMode={ConnectionMode.Loose}
         fitView
-        fitViewOptions={{ padding: 0.2 }}
+        fitViewOptions={{ padding: 0.3 }}
         minZoom={0.2}
         maxZoom={1.5}
         proOptions={{ hideAttribution: true }}
       >
-        <Background color="#cbd5e1" gap={24} size={1} />
-        <Controls className="bg-white/90 backdrop-blur border border-slate-200 shadow-lg rounded-lg overflow-hidden" />
+        <Background color="#4a4a5e" gap={24} size={2} />
+        <Controls className="!bottom-6 !right-6 !left-auto" />
 
-        {/* Export Button */}
-        <div className="absolute top-6 right-6 z-10">
+        {/* Export Button - must be inside ReactFlow for useReactFlow() hook */}
+        <div className="absolute top-5 right-5 z-10">
           <DownloadButton />
         </div>
       </ReactFlow>
