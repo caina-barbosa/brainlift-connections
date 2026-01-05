@@ -1,6 +1,8 @@
 import os
+import ssl
 from collections.abc import AsyncGenerator
 from datetime import datetime
+from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
 from dotenv import load_dotenv
 from sqlalchemy import Column, DateTime, String, Text
@@ -13,12 +15,28 @@ load_dotenv()
 DATABASE_URL = os.getenv("DATABASE_URL", "")
 
 # Convert postgres:// to postgresql+asyncpg:// for SQLAlchemy async
-if DATABASE_URL.startswith("postgres://"):
-    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql+asyncpg://", 1)
-elif DATABASE_URL.startswith("postgresql://"):
-    DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+asyncpg://", 1)
+# Also handle sslmode parameter which asyncpg doesn't accept in URL
+connect_args: dict = {}
 
-engine = create_async_engine(DATABASE_URL, echo=False) if DATABASE_URL else None
+if DATABASE_URL:
+    if DATABASE_URL.startswith("postgres://"):
+        DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql+asyncpg://", 1)
+    elif DATABASE_URL.startswith("postgresql://"):
+        DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+asyncpg://", 1)
+
+    # Parse URL and remove sslmode from query params (asyncpg doesn't accept it)
+    parsed = urlparse(DATABASE_URL)
+    query_params = parse_qs(parsed.query)
+
+    if "sslmode" in query_params:
+        del query_params["sslmode"]
+        # Reconstruct URL without sslmode
+        new_query = urlencode(query_params, doseq=True)
+        DATABASE_URL = urlunparse(parsed._replace(query=new_query))
+        # Use SSL for Neon connections
+        connect_args["ssl"] = ssl.create_default_context()
+
+engine = create_async_engine(DATABASE_URL, echo=False, connect_args=connect_args) if DATABASE_URL else None
 async_session = (
     async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False) if engine else None
 )
