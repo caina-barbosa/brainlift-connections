@@ -10,6 +10,8 @@ services:
     envVars:
       - key: GROQ_API_KEY
         sync: false  # Set manually in Render dashboard
+      - key: DATABASE_URL
+        sync: false  # Set to your Neon connection string in Render dashboard
       - key: PYTHON_VERSION
         value: "3.11"
 

@@ -1,126 +1,121 @@
 """
-Simple JSON file storage for BrainLifts
+PostgreSQL storage for BrainLifts using SQLAlchemy async
 """
 
-import json
-import os
 from datetime import datetime
-from pathlib import Path
 from typing import Any
 
-DATA_DIR = Path(__file__).parent / "data"
-BRAINLIFTS_FILE = DATA_DIR / "brainlifts.json"
+from sqlalchemy import delete as sql_delete
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from database import BrainLift
 
 
-def _ensure_data_dir():
-    """Ensure data directory exists"""
-    DATA_DIR.mkdir(exist_ok=True)
-    if not BRAINLIFTS_FILE.exists():
-        BRAINLIFTS_FILE.write_text(json.dumps({"brainlifts": {}}, indent=2))
-
-
-def _load_data() -> dict[str, Any]:
-    """Load data from JSON file"""
-    _ensure_data_dir()
-    return json.loads(BRAINLIFTS_FILE.read_text())
-
-
-def _save_data(data: dict[str, Any]):
-    """Save data to JSON file"""
-    _ensure_data_dir()
-    BRAINLIFTS_FILE.write_text(json.dumps(data, indent=2, default=str))
-
-
-def save_brainlift(
+async def save_brainlift(
+    session: AsyncSession,
     brainlift_id: str,
     name: str,
     url: str,
     sections: dict[str, Any],
-    raw_markdown: str = ""
+    raw_markdown: str = "",
 ) -> dict[str, Any]:
     """Save a new brainlift or update existing one"""
-    data = _load_data()
+    result = await session.execute(select(BrainLift).where(BrainLift.id == brainlift_id))
+    existing = result.scalar_one_or_none()
 
-    now = datetime.utcnow().isoformat()
-
-    if brainlift_id in data["brainlifts"]:
-        # Update existing
-        data["brainlifts"][brainlift_id].update({
-            "name": name,
-            "url": url,
-            "sections": sections,
-            "raw_markdown": raw_markdown,
-            "updated_at": now,
-        })
+    if existing:
+        existing.name = name
+        existing.url = url
+        existing.sections = sections
+        existing.raw_markdown = raw_markdown
+        existing.updated_at = datetime.utcnow()
     else:
-        # Create new
-        data["brainlifts"][brainlift_id] = {
-            "id": brainlift_id,
-            "name": name,
-            "url": url,
-            "created_at": now,
-            "updated_at": now,
-            "sections": sections,
-            "raw_markdown": raw_markdown,
-            "connections": None,
-        }
+        existing = BrainLift(
+            id=brainlift_id,
+            name=name,
+            url=url,
+            sections=sections,
+            raw_markdown=raw_markdown,
+            connections=None,
+        )
+        session.add(existing)
 
-    _save_data(data)
-    return data["brainlifts"][brainlift_id]
+    await session.commit()
+    await session.refresh(existing)
+
+    return _to_dict(existing)
 
 
-def get_brainlift(brainlift_id: str) -> dict[str, Any] | None:
+async def get_brainlift(session: AsyncSession, brainlift_id: str) -> dict[str, Any] | None:
     """Get a brainlift by ID"""
-    data = _load_data()
-    return data["brainlifts"].get(brainlift_id)
+    result = await session.execute(select(BrainLift).where(BrainLift.id == brainlift_id))
+    brainlift = result.scalar_one_or_none()
+    return _to_dict(brainlift) if brainlift else None
 
 
-def list_brainlifts() -> list[dict[str, str]]:
+async def list_brainlifts(session: AsyncSession) -> list[dict[str, str]]:
     """List all brainlifts (summary only)"""
-    data = _load_data()
+    result = await session.execute(select(BrainLift).order_by(BrainLift.created_at.desc()))
+    brainlifts = result.scalars().all()
+
     return [
         {
-            "id": bl["id"],
-            "name": bl["name"],
-            "created_at": bl["created_at"],
+            "id": str(bl.id),
+            "name": bl.name,
+            "created_at": bl.created_at.isoformat() if bl.created_at else None,
         }
-        for bl in sorted(
-            data["brainlifts"].values(),
-            key=lambda x: x["created_at"],
-            reverse=True
-        )
+        for bl in brainlifts
     ]
 
 
-def save_connections(brainlift_id: str, connections: dict[str, Any]) -> bool:
+async def save_connections(
+    session: AsyncSession, brainlift_id: str, connections: dict[str, Any]
+) -> bool:
     """Save connection analysis results for a brainlift"""
-    data = _load_data()
+    result = await session.execute(select(BrainLift).where(BrainLift.id == brainlift_id))
+    brainlift = result.scalar_one_or_none()
 
-    if brainlift_id not in data["brainlifts"]:
+    if not brainlift:
         return False
 
-    data["brainlifts"][brainlift_id]["connections"] = connections
-    data["brainlifts"][brainlift_id]["updated_at"] = datetime.utcnow().isoformat()
+    brainlift.connections = connections
+    brainlift.updated_at = datetime.utcnow()
 
-    _save_data(data)
+    await session.commit()
     return True
 
 
-def get_connections(brainlift_id: str) -> dict[str, Any] | None:
+async def get_connections(session: AsyncSession, brainlift_id: str) -> dict[str, Any] | None:
     """Get connections for a brainlift"""
-    brainlift = get_brainlift(brainlift_id)
+    brainlift = await get_brainlift(session, brainlift_id)
     if brainlift:
         return brainlift.get("connections")
     return None
 
 
-def delete_brainlift(brainlift_id: str) -> bool:
+async def delete_brainlift(session: AsyncSession, brainlift_id: str) -> bool:
     """Delete a brainlift"""
-    data = _load_data()
+    result = await session.execute(select(BrainLift).where(BrainLift.id == brainlift_id))
+    brainlift = result.scalar_one_or_none()
 
-    if brainlift_id not in data["brainlifts"]:
+    if not brainlift:
         return False
 
-    del data["brainlifts"][brainlift_id]
-    _save_data(data)
+    await session.execute(sql_delete(BrainLift).where(BrainLift.id == brainlift_id))
+    await session.commit()
     return True
+
+
+def _to_dict(brainlift: BrainLift) -> dict[str, Any]:
+    """Convert BrainLift model to dictionary"""
+    return {
+        "id": str(brainlift.id),
+        "name": brainlift.name,
+        "url": brainlift.url,
+        "raw_markdown": brainlift.raw_markdown,
+        "sections": brainlift.sections,
+        "connections": brainlift.connections,
+        "created_at": brainlift.created_at.isoformat() if brainlift.created_at else None,
+        "updated_at": brainlift.updated_at.isoformat() if brainlift.updated_at else None,
+    }

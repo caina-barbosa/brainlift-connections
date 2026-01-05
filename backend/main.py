@@ -7,21 +7,32 @@ import json
 import logging
 import re
 import uuid
+from contextlib import asynccontextmanager
 from enum import Enum
 from typing import Any
 
 import aiohttp
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+from sqlalchemy.ext.asyncio import AsyncSession
 
 import storage
+from database import get_session, init_db
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-app = FastAPI(title="BrainLift Connections API")
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Initialize database on startup"""
+    await init_db()
+    logger.info("Database initialized")
+    yield
+
+
+app = FastAPI(title="BrainLift Connections API", lifespan=lifespan)
 
 # CORS for frontend
 app.add_middleware(
@@ -35,8 +46,10 @@ app.add_middleware(
 
 # ============== Pydantic Models ==============
 
+
 class DOKItem(BaseModel):
     """A single DOK item (SPOV, Insight, or Knowledge Tree node)"""
+
     index: int
     content: str
     children: list[str] = []
@@ -44,12 +57,14 @@ class DOKItem(BaseModel):
 
 class DOKSection(BaseModel):
     """A DOK section with all its items"""
+
     raw: str
     items: list[DOKItem]
 
 
 class BrainLiftSections(BaseModel):
     """All extracted sections from a BrainLift"""
+
     owners: str = ""
     purpose: str = ""
     experts: str = ""
@@ -72,6 +87,7 @@ class ExtractResponse(BaseModel):
 
 
 # ============== Connection Models ==============
+
 
 class ConnectionType(str, Enum):
     SUPPORTS = "supports"
@@ -107,6 +123,7 @@ class SavedBrainLift(BaseModel):
 
 
 # ============== WorkFlowy Scraper ==============
+
 
 class WorkflowyScraper:
     """Simple WorkFlowy scraper - extracts data from shared WorkFlowy links"""
@@ -172,7 +189,8 @@ class WorkflowyScraper:
 
             # Filter out comment nodes
             filtered = [
-                node for node in items
+                node
+                for node in items
                 if "cmnt" not in (node.get("metadata", {}).get("layoutMode") or "")
             ]
             return filtered
@@ -244,7 +262,7 @@ class WorkflowyScraper:
         # Build tree and generate markdown
         tree = self.build_tree(items)
         markdown = ""
-        for root_id, root_node in tree.items():
+        for _root_id, root_node in tree.items():
             markdown += self.node_to_markdown(root_node)
 
         return items, markdown
@@ -258,16 +276,27 @@ SECTION_VARIANTS = {
     "purpose": ["Purpose", "purpose", "Mission", "mission"],
     "experts": ["Experts", "experts", "Expert", "expert"],
     "dok2": [
-        "DOK2 - Knowledge Tree", "DOK2 - knowledge tree", "DOK2-Knowledge Tree",
-        "DOK2", "Knowledge Tree", "knowledge tree", "DOK1 and DOK2", "DOK1/DOK2"
+        "DOK2 - Knowledge Tree",
+        "DOK2 - knowledge tree",
+        "DOK2-Knowledge Tree",
+        "DOK2",
+        "Knowledge Tree",
+        "knowledge tree",
+        "DOK1 and DOK2",
+        "DOK1/DOK2",
     ],
-    "dok3": [
-        "DOK3 - Insights", "DOK3-Insights", "DOK3 - insights",
-        "DOK3", "Insights", "insights"
-    ],
+    "dok3": ["DOK3 - Insights", "DOK3-Insights", "DOK3 - insights", "DOK3", "Insights", "insights"],
     "dok4": [
-        "DOK4 - SPOV", "DOK4-SPOV", "DOK4 - SPOVs", "DOK4-SPOVs",
-        "DOK4", "SPOV", "SPOVs", "SpikyPOVs", "Spiky POVs", "SpikyPOV"
+        "DOK4 - SPOV",
+        "DOK4-SPOV",
+        "DOK4 - SPOVs",
+        "DOK4-SPOVs",
+        "DOK4",
+        "SPOV",
+        "SPOVs",
+        "SpikyPOVs",
+        "Spiky POVs",
+        "SpikyPOV",
     ],
 }
 
@@ -341,11 +370,7 @@ def parse_dok_section(items: list[dict], section_node: dict) -> DOKSection:
         if note:
             content += f"\n{note}"
 
-        dok_items.append(DOKItem(
-            index=idx + 1,
-            content=content,
-            children=child_contents
-        ))
+        dok_items.append(DOKItem(index=idx + 1, content=content, children=child_contents))
 
     return DOKSection(raw=raw, items=dok_items)
 
@@ -392,13 +417,14 @@ def extract_sections(items: list[dict]) -> BrainLiftSections:
 
 # ============== API Endpoints ==============
 
+
 @app.get("/health")
 async def health():
     return {"status": "ok"}
 
 
 @app.post("/extract", response_model=ExtractResponse)
-async def extract_brainlift(request: ExtractRequest):
+async def extract_brainlift(request: ExtractRequest, session: AsyncSession = Depends(get_session)):
     """Extract DOK sections from a WorkFlowy BrainLift URL and save to storage"""
     scraper = WorkflowyScraper()
 
@@ -408,8 +434,9 @@ async def extract_brainlift(request: ExtractRequest):
         brainlift_name = extract_root_name(items)
 
         # Generate ID and save to storage
-        brainlift_id = str(uuid.uuid4())[:8]
-        storage.save_brainlift(
+        brainlift_id = str(uuid.uuid4())
+        await storage.save_brainlift(
+            session=session,
             brainlift_id=brainlift_id,
             name=brainlift_name,
             url=request.url,
@@ -424,31 +451,28 @@ async def extract_brainlift(request: ExtractRequest):
             brainlift_id=brainlift_id,
             brainlift_name=brainlift_name,
             sections=sections,
-            raw_markdown=markdown
+            raw_markdown=markdown,
         )
 
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e)) from e
     except Exception as e:
         logger.error(f"Error extracting brainlift: {e}")
-        return ExtractResponse(
-            success=False,
-            error=str(e)
-        )
+        return ExtractResponse(success=False, error=str(e))
     finally:
         await scraper.close()
 
 
 @app.get("/brainlifts", response_model=list[BrainLiftSummary])
-async def list_brainlifts():
+async def list_brainlifts_endpoint(session: AsyncSession = Depends(get_session)):
     """List all saved brainlifts"""
-    return storage.list_brainlifts()
+    return await storage.list_brainlifts(session)
 
 
 @app.get("/brainlifts/{brainlift_id}", response_model=SavedBrainLift)
-async def get_brainlift(brainlift_id: str):
+async def get_brainlift_endpoint(brainlift_id: str, session: AsyncSession = Depends(get_session)):
     """Get a saved brainlift by ID"""
-    brainlift = storage.get_brainlift(brainlift_id)
+    brainlift = await storage.get_brainlift(session, brainlift_id)
     if not brainlift:
         raise HTTPException(status_code=404, detail="BrainLift not found")
 
@@ -468,17 +492,21 @@ async def get_brainlift(brainlift_id: str):
 
 
 @app.delete("/brainlifts/{brainlift_id}")
-async def delete_brainlift(brainlift_id: str):
+async def delete_brainlift_endpoint(
+    brainlift_id: str, session: AsyncSession = Depends(get_session)
+):
     """Delete a saved brainlift"""
-    if not storage.delete_brainlift(brainlift_id):
+    if not await storage.delete_brainlift(session, brainlift_id):
         raise HTTPException(status_code=404, detail="BrainLift not found")
     return {"success": True}
 
 
 @app.post("/brainlifts/{brainlift_id}/analyze", response_model=ConnectionAnalysis)
-async def analyze_connections(brainlift_id: str, force: bool = False):
+async def analyze_connections(
+    brainlift_id: str, force: bool = False, session: AsyncSession = Depends(get_session)
+):
     """Analyze connections between DOK levels for a brainlift"""
-    brainlift = storage.get_brainlift(brainlift_id)
+    brainlift = await storage.get_brainlift(session, brainlift_id)
     if not brainlift:
         raise HTTPException(status_code=404, detail="BrainLift not found")
 
@@ -490,27 +518,36 @@ async def analyze_connections(brainlift_id: str, force: bool = False):
     # Import groq service here to avoid import error if GROQ_API_KEY not set
     try:
         from groq_service import GroqService
+
         groq = GroqService()
     except ValueError as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
     sections = brainlift["sections"]
 
     # Get DOK items
-    dok2_items = sections.get("dok2_knowledge_tree", {}).get("items", []) if sections.get("dok2_knowledge_tree") else []
-    dok3_items = sections.get("dok3_insights", {}).get("items", []) if sections.get("dok3_insights") else []
+    dok2_items = (
+        sections.get("dok2_knowledge_tree", {}).get("items", [])
+        if sections.get("dok2_knowledge_tree")
+        else []
+    )
+    dok3_items = (
+        sections.get("dok3_insights", {}).get("items", []) if sections.get("dok3_insights") else []
+    )
     dok4_items = sections.get("dok4_spov", {}).get("items", []) if sections.get("dok4_spov") else []
 
     if not dok2_items and not dok3_items and not dok4_items:
         raise HTTPException(status_code=400, detail="No DOK sections found to analyze")
 
-    logger.info(f"Analyzing connections for {brainlift_id}: DOK2={len(dok2_items)}, DOK3={len(dok3_items)}, DOK4={len(dok4_items)}")
+    logger.info(
+        f"Analyzing connections for {brainlift_id}: DOK2={len(dok2_items)}, DOK3={len(dok3_items)}, DOK4={len(dok4_items)}"
+    )
 
     # Run analysis
     connections = await groq.analyze_all_connections(dok2_items, dok3_items, dok4_items)
 
     # Save results
-    storage.save_connections(brainlift_id, connections)
+    await storage.save_connections(session, brainlift_id, connections)
 
     return ConnectionAnalysis(**connections)
 
@@ -522,9 +559,9 @@ class RefreshResponse(BaseModel):
 
 
 @app.post("/brainlifts/{brainlift_id}/refresh", response_model=RefreshResponse)
-async def refresh_brainlift(brainlift_id: str):
+async def refresh_brainlift(brainlift_id: str, session: AsyncSession = Depends(get_session)):
     """Check for changes in the WorkFlowy source and refresh if needed"""
-    brainlift = storage.get_brainlift(brainlift_id)
+    brainlift = await storage.get_brainlift(session, brainlift_id)
     if not brainlift:
         raise HTTPException(status_code=404, detail="BrainLift not found")
 
@@ -541,16 +578,14 @@ async def refresh_brainlift(brainlift_id: str):
 
         # Compare markdown
         if new_markdown.strip() == stored_markdown.strip():
-            return RefreshResponse(
-                has_changes=False,
-                message="No changes detected"
-            )
+            return RefreshResponse(has_changes=False, message="No changes detected")
 
         # Changes detected - update storage
         sections = extract_sections(items)
         brainlift_name = extract_root_name(items)
 
-        storage.save_brainlift(
+        await storage.save_brainlift(
+            session=session,
             brainlift_id=brainlift_id,
             name=brainlift_name,
             url=url,
@@ -559,23 +594,22 @@ async def refresh_brainlift(brainlift_id: str):
         )
 
         # Clear cached connections since content changed
-        storage.save_connections(brainlift_id, None)
+        await storage.save_connections(session, brainlift_id, None)
 
         logger.info(f"Refreshed brainlift {brainlift_id} with new content")
 
         return RefreshResponse(
-            has_changes=True,
-            message="Changes detected and updated",
-            sections=sections
+            has_changes=True, message="Changes detected and updated", sections=sections
         )
 
     except Exception as e:
         logger.error(f"Error refreshing brainlift: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
     finally:
         await scraper.close()
 
 
 if __name__ == "__main__":
     import uvicorn
+
     uvicorn.run(app, host="0.0.0.0", port=8001)
