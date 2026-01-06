@@ -73,6 +73,26 @@ class BrainLiftSections(BaseModel):
     dok4_spov: DOKSection | None = None
 
 
+class SectionDiagnostic(BaseModel):
+    """Diagnostic info for a single section"""
+
+    status: str  # "found" | "fallback" | "missing"
+    matched_header: str | None = None  # The actual header text that matched
+    expected_headers: list[str] = []  # Headers we were looking for
+    item_count: int = 0  # Number of items found in this section
+
+
+class ParsingInfo(BaseModel):
+    """Information about how sections were parsed"""
+
+    status: str = "normal"  # "normal" | "fallback"
+    fallback_sections: list[
+        str
+    ] = []  # Which sections required fallback: ["dok2", "dok3", "dok4"]
+    message: str | None = None
+    diagnostics: dict[str, SectionDiagnostic] = {}  # Per-section diagnostic info
+
+
 class ExtractRequest(BaseModel):
     url: str
 
@@ -84,6 +104,7 @@ class ExtractResponse(BaseModel):
     sections: BrainLiftSections | None = None
     error: str | None = None
     raw_markdown: str = ""
+    parsing_info: ParsingInfo | None = None
 
 
 # ============== Connection Models ==============
@@ -120,6 +141,9 @@ class SavedBrainLift(BaseModel):
     created_at: str
     sections: BrainLiftSections
     connections: ConnectionAnalysis | None = None
+    parsing_status: str = "normal"  # "normal" | "fallback"
+    fallback_sections: list[str] = []
+    parsing_diagnostics: dict[str, SectionDiagnostic] | None = None
 
 
 # ============== WorkFlowy Scraper ==============
@@ -165,24 +189,32 @@ class WorkflowyScraper:
         """Get initialization data to find root nodes"""
         url = f"{self.WORKFLOWY_URL}/get_initialization_data?share_id={share_id}&client_version=21&client_version_v2=28&no_root_children=1&include_main_tree=1"
         session = await self.get_session()
-        async with session.get(url, headers={"Cookie": f"sessionid={session_id}"}) as response:
+        async with session.get(
+            url, headers={"Cookie": f"sessionid={session_id}"}
+        ) as response:
             response.raise_for_status()
             data = await response.json()
 
             # Extract root project IDs
             root_ids = []
             if "projectTreeData" in data:
-                main_project_tree = data["projectTreeData"].get("mainProjectTreeInfo", {})
+                main_project_tree = data["projectTreeData"].get(
+                    "mainProjectTreeInfo", {}
+                )
                 root_id = main_project_tree.get("rootProjectChildren", [])
                 if root_id:
                     root_ids = root_id
             return root_ids
 
-    async def get_tree_data(self, session_id: str, share_id: str) -> list[dict[str, Any]]:
+    async def get_tree_data(
+        self, session_id: str, share_id: str
+    ) -> list[dict[str, Any]]:
         """Get the full tree data"""
         url = f"{self.WORKFLOWY_URL}/get_tree_data/?share_id={share_id}"
         session = await self.get_session()
-        async with session.get(url, headers={"Cookie": f"sessionid={session_id}"}) as response:
+        async with session.get(
+            url, headers={"Cookie": f"sessionid={session_id}"}
+        ) as response:
             response.raise_for_status()
             data = await response.json()
             items = data.get("items", [])
@@ -247,7 +279,9 @@ class WorkflowyScraper:
         """Scrape WorkFlowy URL and return items and markdown"""
         # Validate URL
         if "workflowy.com/s/" not in url:
-            raise ValueError("Invalid WorkFlowy URL. Must be a shared link (workflowy.com/s/...)")
+            raise ValueError(
+                "Invalid WorkFlowy URL. Must be a shared link (workflowy.com/s/...)"
+            )
 
         session_id, share_id = await self.extract_share_id(url)
         items = await self.get_tree_data(session_id, share_id)
@@ -285,7 +319,14 @@ SECTION_VARIANTS = {
         "DOK1 and DOK2",
         "DOK1/DOK2",
     ],
-    "dok3": ["DOK3 - Insights", "DOK3-Insights", "DOK3 - insights", "DOK3", "Insights", "insights"],
+    "dok3": [
+        "DOK3 - Insights",
+        "DOK3-Insights",
+        "DOK3 - insights",
+        "DOK3",
+        "Insights",
+        "insights",
+    ],
     "dok4": [
         "DOK4 - SPOV",
         "DOK4-SPOV",
@@ -301,8 +342,11 @@ SECTION_VARIANTS = {
 }
 
 
-def find_section_node(items: list[dict], section_variants: list[str]) -> dict | None:
-    """Find a top-level node matching one of the section name variants"""
+def find_section_node(
+    items: list[dict], section_variants: list[str]
+) -> tuple[dict | None, str | None]:
+    """Find a top-level node matching one of the section name variants.
+    Returns (node, matched_header) tuple."""
     # Find root node first
     root_id = None
     for item in items:
@@ -311,7 +355,7 @@ def find_section_node(items: list[dict], section_variants: list[str]) -> dict | 
             break
 
     if not root_id:
-        return None
+        return None, None
 
     # Find direct children of root that match section names
     for item in items:
@@ -319,9 +363,43 @@ def find_section_node(items: list[dict], section_variants: list[str]) -> dict | 
             name = item.get("nm", "").strip()
             for variant in section_variants:
                 if variant.lower() in name.lower():
-                    return item
+                    return item, name
 
-    return None
+    return None, None
+
+
+def find_section_node_recursive(
+    items: list[dict], section_variants: list[str]
+) -> tuple[dict | None, str | None]:
+    """Search ALL items for a section matching variants (fallback parser).
+    Returns (node, matched_header) tuple.
+    Only returns nodes that have children (actual section headers, not leaf nodes)."""
+    # Build a set of parent IDs to check which nodes have children
+    parent_ids = {item.get("prnt") for item in items if item.get("prnt")}
+
+    # Patterns that indicate a FALSE POSITIVE (not a section header)
+    # e.g., "DOK2 - Summary" is a summary item inside a source, not the DOK2 section
+    false_positive_patterns = ["summary", "fact", "facts"]
+
+    for item in items:
+        name = item.get("nm", "").strip()
+        name_lower = name.lower()
+        node_id = item.get("id")
+        has_children = node_id in parent_ids
+
+        # Only consider nodes that have children - leaf nodes aren't section headers
+        if not has_children:
+            continue
+
+        # Skip false positives like "DOK2 - Summary" or "DOK1 Facts"
+        if any(fp in name_lower for fp in false_positive_patterns):
+            continue
+
+        for variant in section_variants:
+            if variant.lower() in name_lower:
+                return item, name
+
+    return None, None
 
 
 def get_node_children(items: list[dict], parent_id: str) -> list[dict]:
@@ -346,31 +424,100 @@ def get_node_content_recursive(items: list[dict], node: dict, level: int = 0) ->
     return content
 
 
+# Wrapper node names that should be drilled into (for DOK4 Truth/Myth structure)
+SPOV_WRAPPER_VARIANTS = ["truth", "truths", "myth", "myths"]
+
+
+def is_spov_wrapper(name: str) -> tuple[bool, str]:
+    """Check if a node name is a SPOV wrapper (Truth/Myth) and return the category"""
+    name_lower = name.lower().strip()
+    for variant in SPOV_WRAPPER_VARIANTS:
+        if variant in name_lower:
+            # Determine category
+            if "myth" in name_lower:
+                return True, "Myth"
+            else:
+                return True, "Truth"
+    return False, ""
+
+
+def is_dok_section_node(name: str) -> bool:
+    """Check if a node name matches any DOK section variant (should be skipped as an item)"""
+    name_lower = name.lower().strip()
+    # Check against all DOK section variants
+    for section_key in ["dok2", "dok3", "dok4"]:
+        for variant in SECTION_VARIANTS[section_key]:
+            if variant.lower() in name_lower:
+                return True
+    return False
+
+
 def parse_dok_section(items: list[dict], section_node: dict) -> DOKSection:
     """Parse a DOK section into structured items"""
+    section_id = section_node.get("id")
+
     # Get raw content
     raw = get_node_content_recursive(items, section_node)
 
     # Get direct children as DOK items
-    children = get_node_children(items, section_node["id"])
+    children = get_node_children(items, section_id)
     dok_items = []
+    item_index = 1
 
-    for idx, child in enumerate(sorted(children, key=lambda x: x.get("pr", 0))):
+    for child in sorted(children, key=lambda x: x.get("pr", 0)):
         name = child.get("nm", "").strip()
         note = child.get("no", "").strip() if child.get("no") else ""
 
-        # Get sub-children content
-        sub_children = get_node_children(items, child["id"])
-        child_contents = []
-        for sub in sorted(sub_children, key=lambda x: x.get("pr", 0)):
-            sub_content = get_node_content_recursive(items, sub)
-            child_contents.append(sub_content.strip())
+        # Skip if this child is actually another DOK section (nested/misplaced)
+        if is_dok_section_node(name):
+            continue
 
-        content = name
-        if note:
-            content += f"\n{note}"
+        # Check if this is a wrapper node (Truth/Myth) that we should drill into
+        is_wrapper, category = is_spov_wrapper(name)
 
-        dok_items.append(DOKItem(index=idx + 1, content=content, children=child_contents))
+        if is_wrapper:
+            # Drill into wrapper's children as the actual SPOV items
+            wrapper_children = get_node_children(items, child["id"])
+            for wrapper_child in sorted(wrapper_children, key=lambda x: x.get("pr", 0)):
+                wc_name = wrapper_child.get("nm", "").strip()
+                wc_note = (
+                    wrapper_child.get("no", "").strip()
+                    if wrapper_child.get("no")
+                    else ""
+                )
+
+                # Get sub-children content
+                sub_children = get_node_children(items, wrapper_child["id"])
+                child_contents = []
+                for sub in sorted(sub_children, key=lambda x: x.get("pr", 0)):
+                    sub_content = get_node_content_recursive(items, sub)
+                    child_contents.append(sub_content.strip())
+
+                # Prefix content with category
+                content = f"[{category}] {wc_name}"
+                if wc_note:
+                    content += f"\n{wc_note}"
+
+                dok_items.append(
+                    DOKItem(index=item_index, content=content, children=child_contents)
+                )
+                item_index += 1
+        else:
+            # Regular DOK item - process normally
+            sub_children = get_node_children(items, child["id"])
+            child_contents = []
+            for sub in sorted(sub_children, key=lambda x: x.get("pr", 0)):
+                sub_content = get_node_content_recursive(items, sub)
+                child_contents.append(sub_content.strip())
+
+            content = name
+            if note:
+                content += f"\n{note}"
+
+            dok_items.append(
+                DOKItem(index=item_index, content=content, children=child_contents)
+            )
+            item_index += 1
 
     return DOKSection(raw=raw, items=dok_items)
 
@@ -383,36 +530,118 @@ def extract_root_name(items: list[dict]) -> str:
     return "Untitled BrainLift"
 
 
-def extract_sections(items: list[dict]) -> BrainLiftSections:
-    """Extract all BrainLift sections from WorkFlowy items"""
+def extract_sections(items: list[dict]) -> tuple[BrainLiftSections, ParsingInfo]:
+    """Extract all BrainLift sections from WorkFlowy items with fallback parsing"""
     sections = BrainLiftSections()
+    parsing_info = ParsingInfo()
+    fallback_used = []
 
-    # Find and extract each section
-    owners_node = find_section_node(items, SECTION_VARIANTS["owners"])
+    # Find and extract simple sections (no fallback for these)
+    owners_node, _ = find_section_node(items, SECTION_VARIANTS["owners"])
     if owners_node:
         sections.owners = get_node_content_recursive(items, owners_node)
 
-    purpose_node = find_section_node(items, SECTION_VARIANTS["purpose"])
+    purpose_node, _ = find_section_node(items, SECTION_VARIANTS["purpose"])
     if purpose_node:
         sections.purpose = get_node_content_recursive(items, purpose_node)
 
-    experts_node = find_section_node(items, SECTION_VARIANTS["experts"])
+    experts_node, _ = find_section_node(items, SECTION_VARIANTS["experts"])
     if experts_node:
         sections.experts = get_node_content_recursive(items, experts_node)
 
-    dok2_node = find_section_node(items, SECTION_VARIANTS["dok2"])
+    # DOK sections - try primary (root-level) first, track what was found
+    dok2_node, dok2_header = find_section_node(items, SECTION_VARIANTS["dok2"])
+    dok3_node, dok3_header = find_section_node(items, SECTION_VARIANTS["dok3"])
+    dok4_node, dok4_header = find_section_node(items, SECTION_VARIANTS["dok4"])
+
+    # Track section statuses for diagnostics
+    dok2_status = "found" if dok2_node else "missing"
+    dok3_status = "found" if dok3_node else "missing"
+    dok4_status = "found" if dok4_node else "missing"
+
+    # Fallback parsing if any DOK sections are missing at root level
+    dok_missing = not dok2_node or not dok3_node or not dok4_node
+
+    if dok_missing:
+        if not dok2_node:
+            dok2_node, dok2_header = find_section_node_recursive(
+                items, SECTION_VARIANTS["dok2"]
+            )
+            if dok2_node:
+                fallback_used.append("dok2")
+                dok2_status = "fallback"
+
+        if not dok3_node:
+            dok3_node, dok3_header = find_section_node_recursive(
+                items, SECTION_VARIANTS["dok3"]
+            )
+            if dok3_node:
+                fallback_used.append("dok3")
+                dok3_status = "fallback"
+
+        if not dok4_node:
+            dok4_node, dok4_header = find_section_node_recursive(
+                items, SECTION_VARIANTS["dok4"]
+            )
+            if dok4_node:
+                fallback_used.append("dok4")
+                dok4_status = "fallback"
+
+    # Parse found DOK sections
     if dok2_node:
         sections.dok2_knowledge_tree = parse_dok_section(items, dok2_node)
 
-    dok3_node = find_section_node(items, SECTION_VARIANTS["dok3"])
     if dok3_node:
         sections.dok3_insights = parse_dok_section(items, dok3_node)
 
-    dok4_node = find_section_node(items, SECTION_VARIANTS["dok4"])
     if dok4_node:
         sections.dok4_spov = parse_dok_section(items, dok4_node)
 
-    return sections
+    # Build diagnostics for each DOK section
+    parsing_info.diagnostics = {
+        "dok2": SectionDiagnostic(
+            status=dok2_status,
+            matched_header=dok2_header,
+            expected_headers=SECTION_VARIANTS["dok2"][:3],  # Show top 3 expected
+            item_count=len(sections.dok2_knowledge_tree.items)
+            if sections.dok2_knowledge_tree
+            else 0,
+        ),
+        "dok3": SectionDiagnostic(
+            status=dok3_status,
+            matched_header=dok3_header,
+            expected_headers=SECTION_VARIANTS["dok3"][:3],
+            item_count=len(sections.dok3_insights.items)
+            if sections.dok3_insights
+            else 0,
+        ),
+        "dok4": SectionDiagnostic(
+            status=dok4_status,
+            matched_header=dok4_header,
+            expected_headers=SECTION_VARIANTS["dok4"][:3],
+            item_count=len(sections.dok4_spov.items) if sections.dok4_spov else 0,
+        ),
+    }
+
+    # Set parsing info if fallback was used or sections are missing
+    has_missing = (
+        dok2_status == "missing" or dok3_status == "missing" or dok4_status == "missing"
+    )
+    if fallback_used or has_missing:
+        parsing_info.status = "fallback"
+        parsing_info.fallback_sections = fallback_used
+        if has_missing:
+            missing = [
+                k for k, v in parsing_info.diagnostics.items() if v.status == "missing"
+            ]
+            parsing_info.message = f"Missing sections: {', '.join(missing).upper()}"
+        else:
+            parsing_info.message = (
+                f"Used fallback parsing for: {', '.join(fallback_used).upper()}"
+            )
+        logger.warning(f"BrainLift format issue: {parsing_info.message}")
+
+    return sections, parsing_info
 
 
 # ============== API Endpoints ==============
@@ -424,17 +653,24 @@ async def health():
 
 
 @app.post("/extract", response_model=ExtractResponse)
-async def extract_brainlift(request: ExtractRequest, session: AsyncSession = Depends(get_session)):
+async def extract_brainlift(
+    request: ExtractRequest, session: AsyncSession = Depends(get_session)
+):
     """Extract DOK sections from a WorkFlowy BrainLift URL and save to storage"""
     scraper = WorkflowyScraper()
 
     try:
         items, markdown = await scraper.scrape(request.url)
-        sections = extract_sections(items)
+        sections, parsing_info = extract_sections(items)
         brainlift_name = extract_root_name(items)
 
         # Generate ID and save to storage
         brainlift_id = str(uuid.uuid4())
+        # Convert diagnostics to serializable format
+        diagnostics_dict = {
+            k: v.model_dump() for k, v in parsing_info.diagnostics.items()
+        }
+
         await storage.save_brainlift(
             session=session,
             brainlift_id=brainlift_id,
@@ -442,6 +678,9 @@ async def extract_brainlift(request: ExtractRequest, session: AsyncSession = Dep
             url=request.url,
             sections=sections.model_dump(),
             raw_markdown=markdown,
+            parsing_status=parsing_info.status,
+            fallback_sections=parsing_info.fallback_sections,
+            parsing_diagnostics=diagnostics_dict,
         )
 
         logger.info(f"Saved brainlift '{brainlift_name}' with ID {brainlift_id}")
@@ -452,6 +691,7 @@ async def extract_brainlift(request: ExtractRequest, session: AsyncSession = Dep
             brainlift_name=brainlift_name,
             sections=sections,
             raw_markdown=markdown,
+            parsing_info=parsing_info,
         )
 
     except ValueError as e:
@@ -470,7 +710,9 @@ async def list_brainlifts_endpoint(session: AsyncSession = Depends(get_session))
 
 
 @app.get("/brainlifts/{brainlift_id}", response_model=SavedBrainLift)
-async def get_brainlift_endpoint(brainlift_id: str, session: AsyncSession = Depends(get_session)):
+async def get_brainlift_endpoint(
+    brainlift_id: str, session: AsyncSession = Depends(get_session)
+):
     """Get a saved brainlift by ID"""
     brainlift = await storage.get_brainlift(session, brainlift_id)
     if not brainlift:
@@ -481,6 +723,14 @@ async def get_brainlift_endpoint(brainlift_id: str, session: AsyncSession = Depe
     if brainlift.get("connections"):
         connections = ConnectionAnalysis(**brainlift["connections"])
 
+    # Parse diagnostics if they exist
+    diagnostics = None
+    if brainlift.get("parsing_diagnostics"):
+        diagnostics = {
+            k: SectionDiagnostic(**v)
+            for k, v in brainlift["parsing_diagnostics"].items()
+        }
+
     return SavedBrainLift(
         id=brainlift["id"],
         name=brainlift["name"],
@@ -488,6 +738,9 @@ async def get_brainlift_endpoint(brainlift_id: str, session: AsyncSession = Depe
         created_at=brainlift["created_at"],
         sections=BrainLiftSections(**brainlift["sections"]),
         connections=connections,
+        parsing_status=brainlift.get("parsing_status", "normal"),
+        fallback_sections=brainlift.get("fallback_sections", []),
+        parsing_diagnostics=diagnostics,
     )
 
 
@@ -532,9 +785,15 @@ async def analyze_connections(
         else []
     )
     dok3_items = (
-        sections.get("dok3_insights", {}).get("items", []) if sections.get("dok3_insights") else []
+        sections.get("dok3_insights", {}).get("items", [])
+        if sections.get("dok3_insights")
+        else []
     )
-    dok4_items = sections.get("dok4_spov", {}).get("items", []) if sections.get("dok4_spov") else []
+    dok4_items = (
+        sections.get("dok4_spov", {}).get("items", [])
+        if sections.get("dok4_spov")
+        else []
+    )
 
     if not dok2_items and not dok3_items and not dok4_items:
         raise HTTPException(status_code=400, detail="No DOK sections found to analyze")
@@ -556,10 +815,13 @@ class RefreshResponse(BaseModel):
     has_changes: bool
     message: str
     sections: BrainLiftSections | None = None
+    parsing_info: ParsingInfo | None = None
 
 
 @app.post("/brainlifts/{brainlift_id}/refresh", response_model=RefreshResponse)
-async def refresh_brainlift(brainlift_id: str, session: AsyncSession = Depends(get_session)):
+async def refresh_brainlift(
+    brainlift_id: str, session: AsyncSession = Depends(get_session)
+):
     """Check for changes in the WorkFlowy source and refresh if needed"""
     brainlift = await storage.get_brainlift(session, brainlift_id)
     if not brainlift:
@@ -581,8 +843,13 @@ async def refresh_brainlift(brainlift_id: str, session: AsyncSession = Depends(g
             return RefreshResponse(has_changes=False, message="No changes detected")
 
         # Changes detected - update storage
-        sections = extract_sections(items)
+        sections, parsing_info = extract_sections(items)
         brainlift_name = extract_root_name(items)
+
+        # Convert diagnostics to serializable format
+        diagnostics_dict = {
+            k: v.model_dump() for k, v in parsing_info.diagnostics.items()
+        }
 
         await storage.save_brainlift(
             session=session,
@@ -591,6 +858,9 @@ async def refresh_brainlift(brainlift_id: str, session: AsyncSession = Depends(g
             url=url,
             sections=sections.model_dump(),
             raw_markdown=new_markdown,
+            parsing_status=parsing_info.status,
+            fallback_sections=parsing_info.fallback_sections,
+            parsing_diagnostics=diagnostics_dict,
         )
 
         # Clear cached connections since content changed
@@ -599,7 +869,10 @@ async def refresh_brainlift(brainlift_id: str, session: AsyncSession = Depends(g
         logger.info(f"Refreshed brainlift {brainlift_id} with new content")
 
         return RefreshResponse(
-            has_changes=True, message="Changes detected and updated", sections=sections
+            has_changes=True,
+            message="Changes detected and updated",
+            sections=sections,
+            parsing_info=parsing_info,
         )
 
     except Exception as e:

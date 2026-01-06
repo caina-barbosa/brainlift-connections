@@ -96,7 +96,9 @@ class GroqService:
                 content = content.strip()
 
                 # Remove <think>...</think> blocks if present
-                content = re.sub(r'<think>.*?</think>', '', content, flags=re.DOTALL).strip()
+                content = re.sub(
+                    r"<think>.*?</think>", "", content, flags=re.DOTALL
+                ).strip()
 
                 # Clean up markdown code blocks
                 if content.startswith("```"):
@@ -109,7 +111,7 @@ class GroqService:
 
                 # Try to find JSON in the response
                 if not content.startswith("{"):
-                    match = re.search(r'\{.*\}', content, re.DOTALL)
+                    match = re.search(r"\{.*\}", content, re.DOTALL)
                     if match:
                         content = match.group(0)
 
@@ -121,7 +123,9 @@ class GroqService:
                 return result
 
             except json.JSONDecodeError as e:
-                logger.warning(f"Failed to parse LLM response: {e}, content: {content[:100] if content else 'empty'}")
+                logger.warning(
+                    f"Failed to parse LLM response: {e}, content: {content[:100] if content else 'empty'}"
+                )
                 return None
             except Exception as e:
                 logger.error(f"LLM call failed: {e}")
@@ -171,10 +175,9 @@ class GroqService:
                 valid_connections = []
                 for conn in connections:
                     if isinstance(conn, dict) and conn.get("id") in valid_indices:
-                        valid_connections.append({
-                            "id": conn["id"],
-                            "type": conn.get("type", "supports")
-                        })
+                        valid_connections.append(
+                            {"id": conn["id"], "type": conn.get("type", "supports")}
+                        )
                 return valid_connections[:1]  # Enforce max 1
 
         return []
@@ -202,10 +205,9 @@ class GroqService:
                 valid_connections = []
                 for conn in connections:
                     if isinstance(conn, dict) and conn.get("id") in valid_indices:
-                        valid_connections.append({
-                            "id": conn["id"],
-                            "type": conn.get("type", "supports")
-                        })
+                        valid_connections.append(
+                            {"id": conn["id"], "type": conn.get("type", "supports")}
+                        )
                 return valid_connections[:1]  # Enforce max 1
 
         return []
@@ -244,39 +246,47 @@ class GroqService:
         if dok3_items and dok2_items:
             logger.info(f"Finding DOK2 connections for {len(dok3_items)} DOK3 items...")
 
-            results = await asyncio.gather(*[
-                self.find_dok2_connections_for_dok3(dok3, dok2_items)
-                for dok3 in dok3_items
-            ])
+            results = await asyncio.gather(
+                *[
+                    self.find_dok2_connections_for_dok3(dok3, dok2_items)
+                    for dok3 in dok3_items
+                ]
+            )
 
             for dok3, connections in zip(dok3_items, results):
                 for conn in connections:
-                    dok2_to_dok3.append({
-                        "source_index": conn["id"],
-                        "target_index": dok3["index"],
-                        "type": conn["type"],
-                        "score": 95,
-                        "reasoning": f"Direct {'support' if conn['type'] == 'supports' else 'contradiction'} identified",
-                    })
+                    dok2_to_dok3.append(
+                        {
+                            "source_index": conn["id"],
+                            "target_index": dok3["index"],
+                            "type": conn["type"],
+                            "score": 95,
+                            "reasoning": f"Direct {'support' if conn['type'] == 'supports' else 'contradiction'} identified",
+                        }
+                    )
 
         # For each DOK4, find which DOK3s it connects to
         if dok4_items and dok3_items:
             logger.info(f"Finding DOK3 connections for {len(dok4_items)} DOK4 items...")
 
-            results = await asyncio.gather(*[
-                self.find_dok3_connections_for_dok4(dok4, dok3_items)
-                for dok4 in dok4_items
-            ])
+            results = await asyncio.gather(
+                *[
+                    self.find_dok3_connections_for_dok4(dok4, dok3_items)
+                    for dok4 in dok4_items
+                ]
+            )
 
             for dok4, connections in zip(dok4_items, results):
                 for conn in connections:
-                    dok3_to_dok4.append({
-                        "source_index": conn["id"],
-                        "target_index": dok4["index"],
-                        "type": conn["type"],
-                        "score": 95,
-                        "reasoning": f"Direct {'support' if conn['type'] == 'supports' else 'contradiction'} identified",
-                    })
+                    dok3_to_dok4.append(
+                        {
+                            "source_index": conn["id"],
+                            "target_index": dok4["index"],
+                            "type": conn["type"],
+                            "score": 95,
+                            "reasoning": f"Direct {'support' if conn['type'] == 'supports' else 'contradiction'} identified",
+                        }
+                    )
 
         # Limit connections per node (from both directions)
         dok2_to_dok3 = self._limit_connections_per_node(dok2_to_dok3, "source_index")

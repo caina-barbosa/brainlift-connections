@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { toast } from "sonner";
-import { CloseIcon, PlusIcon, DotsIcon } from "../Icons";
+import { CloseIcon, PlusIcon, DotsIcon, RefreshIcon, TrashIcon } from "../Icons";
 import ConfirmationModal from "./ConfirmationModal";
 import { API_URL } from "../types";
 import type { BrainLiftSummary } from "../types";
@@ -129,17 +129,19 @@ export default function Sidebar({ isOpen, onClose, savedList, currentId, onDelet
                 </div>
 
                 {menuOpen === bl.id && (
-                  <div className="absolute right-4 top-full mt-1 glass-panel py-1 min-w-[120px] z-20">
+                  <div className="absolute right-4 top-full mt-1 glass-panel min-w-[120px] z-20 overflow-hidden">
                     <button
                       onClick={(e) => handleRefreshClick(bl.id, e)}
-                      className="w-full text-left px-3 py-2 text-sm text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors"
+                      className="w-full text-left px-3 py-2 text-sm text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors flex items-center gap-2"
                     >
+                      <RefreshIcon />
                       Refresh
                     </button>
                     <button
                       onClick={(e) => handleDeleteClick(bl.id, bl.name, e)}
-                      className="w-full text-left px-3 py-2 text-sm text-red-400 hover:bg-red-500/10 transition-colors"
+                      className="w-full text-left px-3 py-2 text-sm text-red-400 hover:bg-red-500/10 transition-colors flex items-center gap-2"
                     >
+                      <TrashIcon />
                       Delete
                     </button>
                   </div>

@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { toast } from "sonner";
 import AnimatedBackground from "../AnimatedBackground";
 import MenuButton from "../components/MenuButton";
 import Sidebar from "../components/Sidebar";
@@ -36,6 +37,20 @@ export default function HomePage({ savedList, onRefresh }: HomePageProps) {
       const data: ExtractResponse = await response.json();
 
       if (data.success && data.brainlift_id) {
+        // Show warning toast if fallback parsing was used
+        if (data.parsing_info?.status === "fallback") {
+          toast.warning(
+            "BrainLift DOES NOT ADHERE TO THE CORRECT FORMAT! Trying alternative parsing methods...",
+            {
+              duration: 5000,
+              style: {
+                background: "var(--bg-elevated)",
+                border: "1px solid var(--dok4-primary)",
+                color: "var(--dok4-primary)",
+              },
+            }
+          );
+        }
         onRefresh();
         navigate(`/bl/${data.brainlift_id}`);
       } else {

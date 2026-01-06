@@ -36,15 +36,21 @@ if DATABASE_URL:
         # Use SSL for Neon connections
         connect_args["ssl"] = ssl.create_default_context()
 
-engine = create_async_engine(
-    DATABASE_URL,
-    echo=False,
-    connect_args=connect_args,
-    pool_pre_ping=True,  # Check if connection is alive before using
-    pool_recycle=300,    # Recycle connections every 5 minutes (Neon closes idle ones)
-) if DATABASE_URL else None
+engine = (
+    create_async_engine(
+        DATABASE_URL,
+        echo=False,
+        connect_args=connect_args,
+        pool_pre_ping=True,  # Check if connection is alive before using
+        pool_recycle=300,  # Recycle connections every 5 minutes (Neon closes idle ones)
+    )
+    if DATABASE_URL
+    else None
+)
 async_session = (
-    async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False) if engine else None
+    async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    if engine
+    else None
 )
 
 Base = declarative_base()
@@ -60,8 +66,19 @@ class BrainLift(Base):
     raw_markdown = Column(Text, nullable=False, default="")
     sections = Column(JSONB, nullable=False, default={})
     connections = Column(JSONB, nullable=True)
+    parsing_status = Column(
+        String(20), nullable=False, default="normal"
+    )  # "normal" | "fallback"
+    fallback_sections = Column(
+        JSONB, nullable=False, default=[]
+    )  # Which sections used fallback
+    parsing_diagnostics = Column(
+        JSONB, nullable=True
+    )  # Detailed parsing diagnostics per section
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    updated_at = Column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
+    )
 
 
 async def init_db():
@@ -74,6 +91,8 @@ async def init_db():
 async def get_session() -> AsyncGenerator[AsyncSession, None]:
     """Dependency for getting async session."""
     if async_session is None:
-        raise RuntimeError("Database not configured. Set DATABASE_URL environment variable.")
+        raise RuntimeError(
+            "Database not configured. Set DATABASE_URL environment variable."
+        )
     async with async_session() as session:
         yield session

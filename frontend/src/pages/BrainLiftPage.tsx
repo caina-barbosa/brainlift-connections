@@ -3,6 +3,7 @@ import { useParams, useNavigate, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 import DOKFlow from "../DOKFlow";
 import MenuButton from "../components/MenuButton";
+import ParsingWarningBanner from "../components/ParsingWarningBanner";
 import Sidebar from "../components/Sidebar";
 import { RefreshIcon, BackIcon } from "../Icons";
 import { API_URL } from "../types";
@@ -11,6 +12,7 @@ import type {
   SavedBrainLift,
   ConnectionAnalysis,
   DOKSection,
+  RefreshResponse,
 } from "../types";
 
 interface BrainLiftPageProps {
@@ -102,10 +104,25 @@ export default function BrainLiftPage({ savedList, onRefresh }: BrainLiftPagePro
         throw new Error(err.detail || "Refresh failed");
       }
 
-      const data = await res.json();
+      const data: RefreshResponse = await res.json();
 
       if (data.has_changes) {
-        toast.success("Changes detected! Refreshing...");
+        // Show warning toast if fallback parsing was used
+        if (data.parsing_info?.status === "fallback") {
+          toast.warning(
+            "BrainLift DOES NOT ADHERE TO THE CORRECT FORMAT! Using alternative parsing methods...",
+            {
+              duration: 5000,
+              style: {
+                background: "var(--bg-elevated)",
+                border: "1px solid var(--dok4-primary)",
+                color: "var(--dok4-primary)",
+              },
+            }
+          );
+        } else {
+          toast.success("Changes detected! Refreshing...");
+        }
         await loadBrainLift(id);
         setTimeout(() => handleAnalyze(), 100);
       } else {
@@ -370,6 +387,13 @@ export default function BrainLiftPage({ savedList, onRefresh }: BrainLiftPagePro
           </button>
         </div>
 
+        {/* Parsing warning banner */}
+        {brainlift.parsing_status === "fallback" && (
+          <div className="absolute top-20 left-1/2 -translate-x-1/2 z-20 max-w-xl w-full px-4">
+            <ParsingWarningBanner brainlift={brainlift} />
+          </div>
+        )}
+
         {/* Flow canvas */}
         {analyzing ? (
           <div className="h-full flex items-center justify-center">
@@ -453,6 +477,13 @@ export default function BrainLiftPage({ savedList, onRefresh }: BrainLiftPagePro
         {error && (
           <div className="glass-panel p-4 mb-8 border-red-500/30">
             <p className="text-red-400 text-sm">{error}</p>
+          </div>
+        )}
+
+        {/* Parsing warning banner */}
+        {brainlift.parsing_status === "fallback" && (
+          <div className="mb-8">
+            <ParsingWarningBanner brainlift={brainlift} />
           </div>
         )}
 
