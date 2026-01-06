@@ -36,7 +36,13 @@ if DATABASE_URL:
         # Use SSL for Neon connections
         connect_args["ssl"] = ssl.create_default_context()
 
-engine = create_async_engine(DATABASE_URL, echo=False, connect_args=connect_args) if DATABASE_URL else None
+engine = create_async_engine(
+    DATABASE_URL,
+    echo=False,
+    connect_args=connect_args,
+    pool_pre_ping=True,  # Check if connection is alive before using
+    pool_recycle=300,    # Recycle connections every 5 minutes (Neon closes idle ones)
+) if DATABASE_URL else None
 async_session = (
     async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False) if engine else None
 )
